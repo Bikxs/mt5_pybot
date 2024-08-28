@@ -1,10 +1,15 @@
-import mt5_lib
+import os.path
+import warnings
+
 import indicator_lib
-import pandas
+import mt5_lib
+from make_trade import make_trade
+
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
 # Main EMA Cross Strategy Function
-def ema_cross_strategy(symbol, timeframe,number_of_candles, ema_one, ema_two):
+def ema_cross_strategy(symbol, timeframe, number_of_candles, ema_one, ema_two, balance, amount_to_risk, comment):
     """
     Main EMA Cross Strategy Function
     :param symbol:
@@ -40,12 +45,33 @@ def ema_cross_strategy(symbol, timeframe,number_of_candles, ema_one, ema_two):
         ema_one=ema_one,
         ema_two=ema_two
     )
-    # Return outcome to user
-    return data
+    # Step 4: check the last line of data frame
+    trade_event = data.tail(1).copy().to_dict('records')[0]
+    take_profit = trade_event['take_profit']
+    stop_loss = trade_event['stop_loss']
+    stop_price = trade_event['stop_price']
+    trade_outcome = False
+    if trade_event['ema_cross']:
+        print()
+        print(data.tail(3))
+        data.to_csv(os.path.join("data", f'{symbol}-{comment}.csv'))
+        if take_profit > 0 and stop_loss > 0 and stop_price > 0:
+            print(f"{comment}: Signal found :-)")
+            trade_outcome = make_trade(
+                balance=balance,
+                comment=comment,
+                amount_to_risk=amount_to_risk,
+                symbol=symbol,
+                take_profit=take_profit,
+                stop_loss=stop_loss,
+                stop_price=stop_price,
+            )
+
+    return trade_outcome
 
 
 # Function to retrieve data for strategy
-def get_data(symbol, timeframe,number_of_candles):
+def get_data(symbol, timeframe, number_of_candles):
     """
     Function to retrieve data from MT5. Data is in the form of candlesticks and should be returned as a
     dataframe
@@ -110,10 +136,10 @@ def det_trade(dataframe, ema_one, ema_two):
     # Choose largest EMA to work with
     if ema_one > ema_two:
         ema_column = ema_one_column
-        min_value = ema_one * 3
+        min_value = ema_one
     elif ema_two > ema_one:
         ema_column = ema_two_column
-        min_value = ema_two * 3
+        min_value = ema_two
     else:
         raise ValueError("EMA values are the same!")
 
@@ -134,12 +160,12 @@ def det_trade(dataframe, ema_one, ema_two):
             # Find when an EMA cross is True
             if dataframe_copy.loc[i, 'ema_cross']:
                 # Determine if a GREEN candle
-                if dataframe_copy.loc[i, 'open'] < dataframe_copy.loc[i, 'close']:
+                if dataframe_copy.loc[i-1, 'open'] < dataframe_copy.loc[i-1, 'close']:
                     # If GREEN, calculate trade values
                     # stop_loss = column of largest EMA
-                    stop_loss = dataframe_copy.loc[i, ema_column]
+                    stop_loss = dataframe_copy.loc[i-1, ema_column]
                     # stop_price (Entry Price) = high of most recent complete candle
-                    stop_price = dataframe_copy.loc[i, 'high']
+                    stop_price = dataframe_copy.loc[i-1, 'high']
                     # take_profit = distance between stop_price and stop_loss added to stop_price
                     distance = stop_price - stop_loss
                     take_profit = stop_price + distance
@@ -147,9 +173,9 @@ def det_trade(dataframe, ema_one, ema_two):
                 else:
                     # If RED, calculate trade values
                     # stop_loss = column of largest EMA
-                    stop_loss = dataframe_copy.loc[i, ema_column]
+                    stop_loss = dataframe_copy.loc[i-1, ema_column]
                     # stop_price (Entry Price) = low of most recent complete candle
-                    stop_price = dataframe_copy.loc[i, 'low']
+                    stop_price = dataframe_copy.loc[i-1, 'low']
                     # take_profit = distance between stop_loss and stop_price, subtracted from stop_price
                     distance = stop_loss - stop_price
                     take_profit = stop_price - distance

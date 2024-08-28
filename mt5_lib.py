@@ -139,3 +139,244 @@ def get_candlesticks(symbol, timeframe, number_of_candles):
     # Add a 'Human Time' column
     dataframe['human_time'] = pandas.to_datetime(dataframe['time'], unit='s')
     return dataframe
+
+
+# Function to retrieve the pip_size of a symbol from MT5
+def get_pip_size(symbol):
+    """
+    Function to retrieve the pip size of a symbol from MetaTrader 5
+    :param symbol: string of the symbol to be queried
+    :return: float of the pip size
+    """
+    # Get the symbol information
+    symbol_info = MetaTrader5.symbol_info(symbol)
+    tick_size = symbol_info.trade_tick_size
+    pip_size = tick_size * 10
+    # Return the pip size
+    return pip_size
+
+
+# Function to retrieve the base currency of a symbol from MT5
+def get_base_currency(symbol):
+    """
+    Function to retrieve the base currency of a symbol from MetaTrader 5
+    :param symbol: string of the symbol to be queried
+    :return: string of the base currency
+    """
+    # Get the symbol information
+    symbol_info = MetaTrader5.symbol_info(symbol)
+    # Return the base currency
+    return symbol_info.currency_base
+
+
+# Function to retrieve the exchange rate of a symbol from MT5
+def get_exchange_rate(symbol):
+    """
+    Function to retrieve the exchange rate of a symbol from MetaTrader 5
+    :param symbol: string of the symbol to be queried
+    :return: float of the exchange rate
+    """
+    # Get the symbol information
+    symbol_info = MetaTrader5.symbol_info(symbol)
+    # Return the exchange rate
+    return symbol_info.bid
+
+
+
+# Function to place an order on MT5
+def place_order(order_type, symbol, volume, stop_loss, take_profit, comment, direct=False, stop_price=0.00):
+    """
+    Function to place a trade on MetaTrader 5. Function checks the order first, as recommended by most traders. If it
+    passes the check, proceeds to place order
+    :param order_type: String. Options are SELL_STOP, BUY_STOP
+    :param symbol: String of the symbol to be traded
+    :param volume: String or Float of the volume to be purchased
+    :param stop_loss: String or Float of Stop_Loss price
+    :param take_profit: String or Float of Take_Profit price
+    :param comment: String of a comment.
+    :param direct: Boolean. Defaults to False. When true, bypasses the trade check
+    :param stop_price: String or Float of the Stop Price
+    :return: Trade Outcome
+    """
+    # Massage the volume, stop_loss, take_profit and stop_prices
+    # Volume can only be up to 2 decimal places on MT5
+    volume = float(volume)
+    volume = round(volume, 2)
+    # Stop Loss should be a float, no more than 4 decimal places
+    stop_loss = float(stop_loss)
+    stop_loss = round(stop_loss, 4)
+    # Take Profit should be a float, no more than 4 decimal places
+    take_profit = float(take_profit)
+    take_profit = round(take_profit, 4)
+    # Stop Price should be a float, no more than 4 decimal places
+    stop_price = float(stop_price)
+    stop_price = round(stop_price, 4)
+    # Set up the order request dictionary. This will be sent to MT5
+    request = {
+        "symbol": symbol,
+        "volume": volume,
+        "sl": stop_loss,
+        "tp": take_profit,
+        "type_time": MetaTrader5.ORDER_TIME_GTC,
+        "comment": comment
+    }
+
+    # Create the order type based upon provided values.
+    if order_type == "SELL_STOP":
+        # Update the request dictionary
+        request['type'] = MetaTrader5.ORDER_TYPE_SELL_STOP
+        request['action'] = MetaTrader5.TRADE_ACTION_PENDING
+        request['type_filling'] = MetaTrader5.ORDER_FILLING_RETURN
+        # If the stop_price is 0, this is an error
+        if stop_price <= 0:
+            raise ValueError("Stop Price cannot be zero")
+        else:
+            request['price'] = stop_price
+    # Update in the case of a BUY_STOP
+    elif order_type == "BUY_STOP":
+        # Update the request dictionary
+        request['type'] = MetaTrader5.ORDER_TYPE_BUY_STOP
+        request['action'] = MetaTrader5.TRADE_ACTION_PENDING
+        request['type_filling'] = MetaTrader5.ORDER_FILLING_RETURN
+        # Check the stop price
+        if stop_price <= 0:
+            raise ValueError("Stop Price cannot be zero")
+        else:
+            request['price'] = stop_price
+    else:
+        # This function can be expanded to accept all different types of values for buying/selling
+        raise ValueError(f"Incorrect value for Order Type: {order_type}")
+
+    # If direct is True, go straight to adding the order
+    if direct is True:
+        # Send the order to MT5
+        order_result = MetaTrader5.order_send(request)
+        # Notify based on the return outcomes
+        if order_result[0] == 10009:
+            print(f"Order for {symbol} successful")
+            return order_result[2]
+        # Notify the user if AutoTrading has been left on in MetaTrader 5
+        elif order_result[0] == 10027:
+            print("Turn off Algo Trading on MT5 Terminal")
+            raise Exception("Turn off Algo Trading on MT5 Terminal")
+        else:
+            # General catch all statement
+            print(f"Error placing order. Error Code {order_result[0]}, Error Details: {order_result}")
+            raise Exception("An error occurred placing an order")
+    # If direct turned off, check the order first
+    else:
+        # Check the order
+        result = MetaTrader5.order_check(request)
+        # If check passes, place an order
+        if result[0] == 0:
+            print(f"Order check for {symbol} successful. Placing the order") #<- This can be commented out.
+            # Place the order (little bit of recursion)
+            place_order(
+                order_type=order_type,
+                symbol=symbol,
+                volume=volume,
+                stop_price=stop_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                comment=comment,
+                direct=True
+            )
+        # Let the user know if an invalid price has been passed
+        elif result[0] == 100015:
+            print(f"Invalid price passed for {symbol}")
+        # Let user know if any other errors occurred
+        else:
+            print(f"Order check failed. Details: {result}")
+
+# Function to Cancel an order on MT5
+def cancel_order(order_number):
+    """
+    Function to cancel an order identified by an order number
+    :param order_number: int representing the order number from MT5
+    :return: Boolean. True = cancelled. False == Not Cancelled.
+    """
+    # Create the request
+    request = {
+        "action": MetaTrader5.TRADE_ACTION_REMOVE,
+        "order": order_number,
+        "comment": "order removed"
+    }
+    # Attempt to send the order to MT5
+    try:
+        order_result = MetaTrader5.order_send(request)
+        if order_result[0] == 10009:
+            print(f"Order {order_number} successfully cancelled")
+            return True
+        # You can put custom error handling if needed
+        else:
+            print(f"Order {order_number} unable to be cancelled")
+            return False
+    except Exception as e:
+        # This represents an issue with MetaTrader 5 terminal, so stop
+        print(f"Error cancelling order {order_number}. Error: {e}")
+        raise Exception
+
+
+# Function to retrieve all currently open orders on MetaTrader 5
+def get_all_open_orders():
+    """
+    Function to retrieve all open orders from MetaTrader 5
+    :return: list of open orders
+    """
+    return MetaTrader5.orders_get()
+
+
+# Function to retrieve a filtered list of open orders from MT5
+def get_filtered_list_of_orders(symbol, comment):
+    """
+    Function to retrieve a filtered list of open orders from MT5. Filtering is performed
+    on symbol and comment
+    :param symbol: string of the symbol being traded
+    :param comment: string of the comment
+    :return: (filtered) list of orders
+    """
+    # Retrieve a list of open orders, filtered by symbol
+    open_orders_by_symbol = MetaTrader5.orders_get(symbol)
+    # Check if any orders were retrieved (there may be none)
+    if open_orders_by_symbol is None or len(open_orders_by_symbol) == 0:
+        return []
+
+    # Convert the retrieved orders into a dataframe
+    open_orders_dataframe = pandas.DataFrame(
+        list(open_orders_by_symbol),
+        columns=open_orders_by_symbol[0]._asdict().keys()
+    )
+    # From the open orders dataframe, filter orders by comment
+    open_orders_dataframe = open_orders_dataframe[open_orders_dataframe['comment'] == comment]
+    # Create a list to store the open order numbers
+    open_orders = []
+    # Iterate through the dataframe and add order numbers to the list
+    for order in open_orders_dataframe['ticket']:
+        open_orders.append(order)
+    # Return the open orders
+    return open_orders
+
+
+# Function to cancel orders based upon filters
+def cancel_filtered_orders(symbol, comment):
+    """
+    Function to cancel a list of filtered orders. Based upon two filters: symbol and comment string.
+    :param symbol: string of symbol
+    :param comment: string of the comment
+    :return: Boolean. True = orders cancelled, False = issue with cancellation
+    """
+    # Retreive a list of the orders based upon the filter
+    orders = get_filtered_list_of_orders(
+        symbol=symbol,
+        comment=comment
+    )
+    if len(orders) > 0:
+        # Iterate through and cancel
+        for order in orders:
+            cancel_outcome = cancel_order(order)
+            if cancel_outcome is not True:
+                return False
+        # At conclusion of iteration, return true
+        return True
+    else:
+        return True
